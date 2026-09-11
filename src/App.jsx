@@ -185,6 +185,106 @@ function ScannerModal({ onClose, onDetect }) {
   );
 }
 
+/* ---------------- Photo identify (on-device, best-effort) ---------------- */
+
+function PhotoIdentifyModal({ onClose, onIdentified }) {
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const streamRef = useRef(null);
+  const modelRef = useRef(null);
+  const [status, setStatus] = useState("starting"); // starting | ready | classifying | error
+  const [error, setError] = useState("");
+  const [predictions, setPredictions] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+        if (cancelled) { stream.getTracks().forEach((t) => t.stop()); return; }
+        streamRef.current = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          await videoRef.current.play();
+        }
+        setStatus("ready");
+      } catch (e) {
+        setError("Camera access was blocked or unavailable.");
+        setStatus("error");
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (streamRef.current) streamRef.current.getTracks().forEach((t) => t.stop());
+    };
+  }, []);
+
+  async function capture() {
+    setStatus("classifying");
+    setPredictions(null);
+    setError("");
+    try {
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+      canvas.width = video.videoWidth || 320;
+      canvas.height = video.videoHeight || 240;
+      canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      if (!modelRef.current) {
+        const mobilenet = await import("@tensorflow-models/mobilenet");
+        await import("@tensorflow/tfjs");
+        modelRef.current = await mobilenet.load();
+      }
+      const preds = await modelRef.current.classify(canvas);
+      setPredictions(preds);
+      setStatus("ready");
+    } catch (e) {
+      setError("Couldn't run recognition on this device/browser.");
+      setStatus("error");
+    }
+  }
+
+  function useLabel(label) {
+    const clean = label.split(",")[0].replace(/_/g, " ").trim();
+    const titled = clean.charAt(0).toUpperCase() + clean.slice(1);
+    onIdentified(titled);
+  }
+
+  return (
+    <Modal title="Identify from photo" onClose={onClose}>
+      {status !== "error" ? (
+        <div className="scanner-wrap">
+          <video ref={videoRef} muted playsInline className="scanner-video" />
+        </div>
+      ) : (
+        <div className="hint-text"><AlertTriangle size={14} style={{ verticalAlign: "-2px", marginRight: 6 }} />{error}</div>
+      )}
+      <canvas ref={canvasRef} style={{ display: "none" }} />
+
+      <button className="btn-solid full" disabled={status !== "ready" && status !== "error"} onClick={capture}>
+        {status === "classifying" ? "Thinking…" : "Capture & identify"}
+      </button>
+
+      {predictions && (
+        <div className="ledger-list">
+          {predictions.map((p, idx) => (
+            <LedgerRow key={idx} onClick={() => useLabel(p.className)}>
+              <div className="row-main">
+                <div className="row-title">{p.className.split(",")[0]}</div>
+                <div className="row-sub">{Math.round(p.probability * 100)}% match · tap to use</div>
+              </div>
+            </LedgerRow>
+          ))}
+        </div>
+      )}
+
+      <div className="hint-text">
+        This is a rough on-device guess, not a brand-specific lookup — always check the name before saving. First use downloads a small recognition model, so it needs internet the first time.
+      </div>
+    </Modal>
+  );
+}
+
 async function lookupBarcode(code) {
   try {
     const res = await fetch(`https://world.openfoodfacts.org/api/v0/product/${encodeURIComponent(code)}.json`);
@@ -287,7 +387,7 @@ function Header({ data }) {
         <div className="stamp-ring">MS</div>
         <div>
           <h1>Mustafa&apos;s Shop</h1>
-          <div className="header-sub">Stationery &amp; Snacks — Ledger</div>
+          <div className="header-sub">Stationery, Snacks &amp; More — Ledger</div>
         </div>
       </div>
       <div className="header-today">
@@ -424,7 +524,7 @@ function Inventory({ data, persist, showToast }) {
       </div>
 
       <div className="chip-row">
-        {["All", "Stationery", "Snacks"].map((c) => (
+        {["All", "Stationery", "Snacks", "Cold Drinks"].map((c) => (
           <button key={c} className={`chip ${category === c ? "active" : ""}`} onClick={() => setCategory(c)}>{c}</button>
         ))}
       </div>
@@ -435,11 +535,16 @@ function Inventory({ data, persist, showToast }) {
           <LedgerRow key={i.id} onClick={() => setEditing(i)}>
             <div className="row-main">
               <div className="row-title">{i.name}</div>
-              <div className="row-sub">{i.category} · margin {fmtMoney(i.sellPrice - i.costPrice)}</div>
+              <div className="row-sub">
+                {i.category} · margin {fmtMoney(i.sellPrice - i.costPrice)}
+                {i.hasBox ? ` · box of ${i.piecesPerBox} @ ${fmtMoney(i.boxSellPrice)}` : ""}
+              </div>
             </div>
             <div className="row-end">
               <div className="row-amt">{fmtMoney(i.sellPrice)}</div>
-              <div className={`row-sub ${i.stock <= (i.lowStockAt ?? 5) ? "rust" : ""}`}>{i.stock} in stock</div>
+              <div className={`row-sub ${i.stock <= (i.lowStockAt ?? 5) ? "rust" : ""}`}>
+                {i.stock} pcs{i.hasBox ? ` (~${Math.floor(i.stock / i.piecesPerBox)} box)` : ""}
+              </div>
             </div>
           </LedgerRow>
         ))}
@@ -465,8 +570,14 @@ function ItemModal({ item, onClose, onSave, onDelete }) {
   const [sellPrice, setSellPrice] = useState(item?.sellPrice ?? "");
   const [stock, setStock] = useState(item?.stock ?? "");
   const [lowStockAt, setLowStockAt] = useState(item?.lowStockAt ?? 5);
+  const [hasBox, setHasBox] = useState(item?.hasBox ?? false);
+  const [piecesPerBox, setPiecesPerBox] = useState(item?.piecesPerBox ?? "");
+  const [boxSellPrice, setBoxSellPrice] = useState(item?.boxSellPrice ?? "");
   const [scanning, setScanning] = useState(false);
+  const [identifying, setIdentifying] = useState(false);
   const [looking, setLooking] = useState(false);
+  const [restockQty, setRestockQty] = useState("");
+  const [restockUnit, setRestockUnit] = useState("piece");
 
   async function handleDetected(code) {
     setBarcode(code);
@@ -477,8 +588,22 @@ function ItemModal({ item, onClose, onSave, onDelete }) {
     if (found?.name && !name) setName(found.brand ? `${found.name} (${found.brand})` : found.name);
   }
 
+  function handleIdentified(label) {
+    setIdentifying(false);
+    setName(label);
+  }
+
+  function applyRestock() {
+    const n = Number(restockQty);
+    if (!n) return;
+    const addPieces = restockUnit === "box" ? n * (Number(piecesPerBox) || 1) : n;
+    setStock((Number(stock) || 0) + addPieces);
+    setRestockQty("");
+  }
+
   function submit() {
     if (!name.trim() || costPrice === "" || sellPrice === "" || stock === "") return;
+    if (hasBox && (!piecesPerBox || !boxSellPrice)) return;
     onSave({
       id: item?.id || uid(),
       name: name.trim(),
@@ -488,6 +613,9 @@ function ItemModal({ item, onClose, onSave, onDelete }) {
       sellPrice: Number(sellPrice),
       stock: Number(stock),
       lowStockAt: Number(lowStockAt) || 5,
+      hasBox,
+      piecesPerBox: hasBox ? Number(piecesPerBox) : null,
+      boxSellPrice: hasBox ? Number(boxSellPrice) : null,
     });
   }
 
@@ -499,7 +627,7 @@ function ItemModal({ item, onClose, onSave, onDelete }) {
 
       <Field label="Category">
         <div className="chip-row">
-          {["Stationery", "Snacks"].map((c) => (
+          {["Stationery", "Snacks", "Cold Drinks"].map((c) => (
             <button key={c} type="button" className={`chip ${category === c ? "active" : ""}`} onClick={() => setCategory(c)}>{c}</button>
           ))}
         </div>
@@ -509,20 +637,21 @@ function ItemModal({ item, onClose, onSave, onDelete }) {
         <div style={{ display: "flex", gap: 8 }}>
           <input value={barcode} onChange={(e) => setBarcode(e.target.value)} placeholder="Scan or type code" />
           <button type="button" className="btn-outline" onClick={() => setScanning(true)}><ScanLine size={16} /></button>
+          <button type="button" className="btn-outline" onClick={() => setIdentifying(true)} title="Identify from photo"><Camera size={16} /></button>
         </div>
         {looking && <div className="hint-text">Looking up product…</div>}
       </Field>
 
       <div className="field-grid">
-        <Field label="Cost price">
+        <Field label="Cost price (per piece)">
           <input type="number" inputMode="decimal" value={costPrice} onChange={(e) => setCostPrice(e.target.value)} placeholder="0" />
         </Field>
-        <Field label="Selling price">
+        <Field label="Selling price (per piece)">
           <input type="number" inputMode="decimal" value={sellPrice} onChange={(e) => setSellPrice(e.target.value)} placeholder="0" />
         </Field>
       </div>
       <div className="field-grid">
-        <Field label="Stock quantity">
+        <Field label="Stock quantity (pieces)">
           <input type="number" inputMode="numeric" value={stock} onChange={(e) => setStock(e.target.value)} placeholder="0" />
         </Field>
         <Field label="Low stock alert at">
@@ -531,7 +660,42 @@ function ItemModal({ item, onClose, onSave, onDelete }) {
       </div>
 
       {costPrice !== "" && sellPrice !== "" && (
-        <div className="hint-text">Margin per unit: {fmtMoney(Number(sellPrice || 0) - Number(costPrice || 0))}</div>
+        <div className="hint-text">Margin per piece: {fmtMoney(Number(sellPrice || 0) - Number(costPrice || 0))}</div>
+      )}
+
+      <div className="restock-box">
+        <span className="restock-label">Goods just arrived? Add to stock</span>
+        <div style={{ display: "flex", gap: 8 }}>
+          <input type="number" inputMode="numeric" placeholder="Qty" value={restockQty} onChange={(e) => setRestockQty(e.target.value)} style={{ flex: 1 }} />
+          <select value={restockUnit} onChange={(e) => setRestockUnit(e.target.value)} style={{ flex: 1 }}>
+            <option value="piece">Piece(s)</option>
+            {hasBox && <option value="box">Box(es) of {piecesPerBox || "?"}</option>}
+          </select>
+          <button type="button" className="btn-outline" onClick={applyRestock}>Add</button>
+        </div>
+      </div>
+
+      <label className="checkbox-row">
+        <input type="checkbox" checked={hasBox} onChange={(e) => setHasBox(e.target.checked)} />
+        <span>Also sold by the box / carton (some people buy loose, some buy the whole box)</span>
+      </label>
+
+      {hasBox && (
+        <>
+          <div className="field-grid">
+            <Field label="Pieces per box">
+              <input type="number" inputMode="numeric" value={piecesPerBox} onChange={(e) => setPiecesPerBox(e.target.value)} placeholder="e.g. 24" />
+            </Field>
+            <Field label="Box selling price">
+              <input type="number" inputMode="decimal" value={boxSellPrice} onChange={(e) => setBoxSellPrice(e.target.value)} placeholder="e.g. 550" />
+            </Field>
+          </div>
+          {piecesPerBox !== "" && costPrice !== "" && boxSellPrice !== "" && (
+            <div className="hint-text">
+              Box cost: {fmtMoney(Number(piecesPerBox) * Number(costPrice))} · Box margin: {fmtMoney(Number(boxSellPrice) - Number(piecesPerBox) * Number(costPrice))}
+            </div>
+          )}
+        </>
       )}
 
       <div className="modal-actions">
@@ -543,6 +707,9 @@ function ItemModal({ item, onClose, onSave, onDelete }) {
 
       {scanning && (
         <ScannerModal onClose={() => setScanning(false)} onDetect={handleDetected} />
+      )}
+      {identifying && (
+        <PhotoIdentifyModal onClose={() => setIdentifying(false)} onIdentified={handleIdentified} />
       )}
     </Modal>
   );
@@ -720,22 +887,39 @@ function EntryForm({ kind, onSubmit }) {
 
 function Sales({ data, persist, showToast }) {
   const [recording, setRecording] = useState(false);
+  const [servicing, setServicing] = useState(false);
   const sorted = [...data.sales].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
   const totalProfit = data.sales.reduce((a, s) => a + s.profit, 0);
   const totalRevenue = data.sales.reduce((a, s) => a + s.total, 0);
 
-  function recordSale({ itemId, qty, credit, customerId }) {
+  function applyCredit(customers, customerId, total, note) {
+    if (!customerId) return customers;
+    return customers.map((c) =>
+      c.id === customerId
+        ? { ...c, balance: c.balance + total, history: [{ id: uid(), kind: "borrow", amount: total, note, date: todayStr() }, ...c.history] }
+        : c
+    );
+  }
+
+  function recordSale({ itemId, qty, unit, credit, customerId }) {
     const item = data.items.find((i) => i.id === itemId);
     if (!item || qty <= 0) return;
-    const total = item.sellPrice * qty;
-    const profit = (item.sellPrice - item.costPrice) * qty;
+
+    const isBox = unit === "box";
+    const unitSell = isBox ? item.boxSellPrice : item.sellPrice;
+    const unitCost = isBox ? item.costPrice * item.piecesPerBox : item.costPrice;
+    const piecesUsed = isBox ? qty * item.piecesPerBox : qty;
+    const total = unitSell * qty;
+    const profit = (unitSell - unitCost) * qty;
+
     const sale = {
       id: uid(),
       itemId,
-      itemName: item.name,
+      itemName: item.name + (isBox ? " (box)" : ""),
       qty,
-      costPrice: item.costPrice,
-      sellPrice: item.sellPrice,
+      unit: isBox ? "box" : "piece",
+      costPrice: unitCost,
+      sellPrice: unitSell,
       total,
       profit,
       credit,
@@ -744,20 +928,40 @@ function Sales({ data, persist, showToast }) {
       createdAt: new Date().toISOString(),
     };
 
-    const items = data.items.map((i) => (i.id === itemId ? { ...i, stock: Math.max(0, i.stock - qty) } : i));
-
-    let customers = data.customers;
-    if (credit && customerId) {
-      customers = data.customers.map((c) =>
-        c.id === customerId
-          ? { ...c, balance: c.balance + total, history: [{ id: uid(), kind: "borrow", amount: total, note: `${item.name} × ${qty}`, date: todayStr() }, ...c.history] }
-          : c
-      );
-    }
+    const items = data.items.map((i) => (i.id === itemId ? { ...i, stock: Math.max(0, i.stock - piecesUsed) } : i));
+    const customers = credit
+      ? applyCredit(data.customers, customerId, total, `${item.name} × ${qty}${isBox ? " box" : ""}`)
+      : data.customers;
 
     persist({ ...data, items, sales: [...data.sales, sale], customers });
     setRecording(false);
     showToast("Sale recorded");
+  }
+
+  function recordService({ description, amount, cost, credit, customerId }) {
+    if (!description.trim() || !amount) return;
+    const total = Number(amount);
+    const profit = total - (Number(cost) || 0);
+    const sale = {
+      id: uid(),
+      itemId: null,
+      itemName: description.trim(),
+      qty: 1,
+      unit: "service",
+      isService: true,
+      costPrice: Number(cost) || 0,
+      sellPrice: total,
+      total,
+      profit,
+      credit,
+      customerId: credit ? customerId : null,
+      date: todayStr(),
+      createdAt: new Date().toISOString(),
+    };
+    const customers = credit ? applyCredit(data.customers, customerId, total, description.trim()) : data.customers;
+    persist({ ...data, sales: [...data.sales, sale], customers });
+    setServicing(false);
+    showToast("Service sale recorded");
   }
 
   return (
@@ -767,7 +971,10 @@ function Sales({ data, persist, showToast }) {
         <Stat label="Total profit" value={fmtMoney(totalProfit)} tone="green" />
       </div>
 
-      <button className="btn-solid full" onClick={() => setRecording(true)}><Plus size={16} /> Record a sale</button>
+      <div className="two-btn-row">
+        <button className="btn-solid full" onClick={() => setRecording(true)}><Plus size={16} /> Sell stock item</button>
+        <button className="btn-outline full" onClick={() => setServicing(true)}><Plus size={16} /> Printing / service</button>
+      </div>
 
       <SectionLabel>Sales history</SectionLabel>
       <div className="ledger-list">
@@ -775,7 +982,7 @@ function Sales({ data, persist, showToast }) {
         {sorted.map((s) => (
           <LedgerRow key={s.id}>
             <div className="row-main">
-              <div className="row-title">{s.itemName} × {s.qty}</div>
+              <div className="row-title">{s.itemName}{!s.isService ? ` × ${s.qty}` : ""}</div>
               <div className="row-sub">{fmtDate(s.date)} · {fmtMoney(s.total)}{s.credit ? " · on khata" : " · cash"}</div>
             </div>
             <div className="row-amt green">+{fmtMoney(s.profit)}</div>
@@ -786,21 +993,83 @@ function Sales({ data, persist, showToast }) {
       {recording && (
         <SaleModal data={data} onClose={() => setRecording(false)} onSubmit={recordSale} />
       )}
+      {servicing && (
+        <ServiceSaleModal data={data} onClose={() => setServicing(false)} onSubmit={recordService} />
+      )}
     </div>
+  );
+}
+
+function ServiceSaleModal({ data, onClose, onSubmit }) {
+  const [description, setDescription] = useState("");
+  const [amount, setAmount] = useState("");
+  const [cost, setCost] = useState("");
+  const [credit, setCredit] = useState(false);
+  const [customerId, setCustomerId] = useState(data.customers[0]?.id || "");
+  const profit = Number(amount || 0) - Number(cost || 0);
+
+  return (
+    <Modal title="Printing / other service" onClose={onClose}>
+      <Field label="What was it">
+        <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="e.g. 10 pages printing, photocopy" />
+      </Field>
+      <div className="field-grid">
+        <Field label="Amount charged">
+          <input type="number" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" />
+        </Field>
+        <Field label="Cost (paper/ink, optional)">
+          <input type="number" inputMode="decimal" value={cost} onChange={(e) => setCost(e.target.value)} placeholder="0" />
+        </Field>
+      </div>
+
+      <label className="checkbox-row">
+        <input type="checkbox" checked={credit} onChange={(e) => setCredit(e.target.checked)} />
+        <span>On khata (credit) instead of cash</span>
+      </label>
+      {credit && (
+        <Field label="Customer">
+          {data.customers.length === 0 ? (
+            <div className="hint-text">Add a customer in the Khata tab first.</div>
+          ) : (
+            <select value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
+              {data.customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          )}
+        </Field>
+      )}
+
+      <div className="totals-box">
+        <div><span>Profit</span><b className="green-text">{fmtMoney(profit)}</b></div>
+      </div>
+
+      <button
+        className="btn-solid full"
+        disabled={!description.trim() || !amount || (credit && !customerId)}
+        onClick={() => onSubmit({ description, amount, cost, credit, customerId: credit ? customerId : null })}
+      >
+        <Check size={16} /> Confirm
+      </button>
+    </Modal>
   );
 }
 
 function SaleModal({ data, onClose, onSubmit }) {
   const [query, setQuery] = useState("");
   const [itemId, setItemId] = useState(data.items[0]?.id || "");
+  const [unit, setUnit] = useState("piece");
   const [qty, setQty] = useState(1);
   const [credit, setCredit] = useState(false);
   const [customerId, setCustomerId] = useState(data.customers[0]?.id || "");
 
   const filteredItems = data.items.filter((i) => i.name.toLowerCase().includes(query.toLowerCase()));
   const item = data.items.find((i) => i.id === itemId);
-  const total = item ? item.sellPrice * qty : 0;
-  const profit = item ? (item.sellPrice - item.costPrice) * qty : 0;
+  const isBox = unit === "box" && item?.hasBox;
+  const unitSell = item ? (isBox ? item.boxSellPrice : item.sellPrice) : 0;
+  const unitCost = item ? (isBox ? item.costPrice * item.piecesPerBox : item.costPrice) : 0;
+  const total = unitSell * qty;
+  const profit = (unitSell - unitCost) * qty;
+  const piecesNeeded = item ? (isBox ? qty * item.piecesPerBox : qty) : 0;
+  const notEnoughStock = item && piecesNeeded > item.stock;
 
   if (data.items.length === 0) {
     return (
@@ -817,16 +1086,28 @@ function SaleModal({ data, onClose, onSubmit }) {
           <Search size={14} />
           <input placeholder="Search item" value={query} onChange={(e) => setQuery(e.target.value)} />
         </div>
-        <select value={itemId} onChange={(e) => setItemId(e.target.value)}>
+        <select value={itemId} onChange={(e) => { setItemId(e.target.value); setUnit("piece"); }}>
           {filteredItems.map((i) => (
-            <option key={i.id} value={i.id}>{i.name} — {fmtMoney(i.sellPrice)} ({i.stock} in stock)</option>
+            <option key={i.id} value={i.id}>{i.name} — {fmtMoney(i.sellPrice)} ({i.stock} pcs in stock)</option>
           ))}
         </select>
       </Field>
 
+      {item?.hasBox && (
+        <Field label="Sold as">
+          <div className="chip-row">
+            <button type="button" className={`chip ${unit === "piece" ? "active" : ""}`} onClick={() => setUnit("piece")}>Piece — {fmtMoney(item.sellPrice)}</button>
+            <button type="button" className={`chip ${unit === "box" ? "active" : ""}`} onClick={() => setUnit("box")}>Box of {item.piecesPerBox} — {fmtMoney(item.boxSellPrice)}</button>
+          </div>
+        </Field>
+      )}
+
       <Field label="Quantity">
         <input type="number" min="1" inputMode="numeric" value={qty} onChange={(e) => setQty(Math.max(1, Number(e.target.value) || 1))} />
       </Field>
+      {notEnoughStock && (
+        <div className="hint-text"><AlertTriangle size={14} style={{ verticalAlign: "-2px", marginRight: 6 }} />Only {item.stock} pieces in stock — this will take it negative.</div>
+      )}
 
       <label className="checkbox-row">
         <input type="checkbox" checked={credit} onChange={(e) => setCredit(e.target.checked)} />
@@ -855,7 +1136,7 @@ function SaleModal({ data, onClose, onSubmit }) {
       <button
         className="btn-solid full"
         disabled={credit && !customerId}
-        onClick={() => onSubmit({ itemId, qty, credit, customerId: credit ? customerId : null })}
+        onClick={() => onSubmit({ itemId, qty, unit: isBox ? "box" : "piece", credit, customerId: credit ? customerId : null })}
       >
         <Check size={16} /> Confirm sale
       </button>
@@ -1114,6 +1395,12 @@ function ShopStyles() {
       .hint-text { font-size: 11px; color: var(--ink-soft); }
       .modal-actions { display: flex; gap: 8px; align-items: center; }
       .checkbox-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+
+      .restock-box {
+        background: var(--paper); border: 1px solid var(--rule-faint); border-radius: 6px;
+        padding: 10px; display: flex; flex-direction: column; gap: 6px;
+      }
+      .restock-label { font-size: 11px; color: var(--ink-soft); font-weight: 600; }
 
       .totals-box {
         background: var(--paper); border: 1px dashed var(--rule); border-radius: 6px; padding: 10px 12px;
