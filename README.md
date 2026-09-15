@@ -1,67 +1,56 @@
-# 🛍️ Mustafa Shop
+# Mustafa's Shop
 
-Mustafa Shop is a modern, responsive e-commerce web application built with **React** and **Vite**.
+A phone-first app for running a small shop with three counters: **snacks**, **stationery**, and **photocopy & printing**.
+Built with React and Vite, installable as a Progressive Web App.
 
-The project is designed to provide a smooth shopping experience across desktop and mobile devices, with **Progressive Web App (PWA)** support so users can install the website as an app on supported devices.
+Everything is stored on the device that uses it. Nothing is uploaded.
 
-## 🚀 Live Demo
+## What it does
 
-[Visit Mustafa Shop](https://mustafa-shop-ghy5.vercel.app/)
+**Home** — today's takings split across the three counters, profit for the last 14 days, what is running low,
+what is owed on the khata, and which purchase bills are still unpaid.
 
----
+**Stock** — scan a barcode to add goods. If the code is already saved, a short sheet just asks how many arrived.
+If it is new, the form opens with the barcode filled and the product name looked up online where possible.
+A photo button names an item from a picture when the packet has no barcode. Items can be sold by the piece or by the box.
 
-## ✨ Features
+**Sales** — sell a stock item (scan or search for it), or record a photocopy/printing job. Printing has saved
+rates per page for photocopy, black and white, colour, scanning, binding and lamination, so one tap and a page
+count is usually enough. Paper and ink cost is subtracted so the profit figure is real.
 
-- 🛍️ Modern e-commerce interface
-- 📱 Responsive design for desktop, tablet, and mobile
-- ⚡ Fast development and production builds with Vite
-- 🛒 Shopping functionality
-- 🔎 Product browsing and interaction
-- 📲 Progressive Web App (PWA) support
-- 💾 Offline-ready architecture
-- 🔄 Automatic PWA updates
-- 🎨 Clean and user-friendly interface
-- 🚀 Deployed with Vercel
+**Khata** — credit accounts. Every item taken and every payment is stored with its date, grouped day by day.
+When a customer leaves the area, their account can be closed — they disappear from the list but the full dated
+history stays. Permanent deletion is a separate, clearly marked action.
 
----
+**Purchase bills** — photograph the bill each time stock is bought from the market. Supplier, amount, date,
+paid or unpaid, and the photo are kept together. Photos are shrunk before saving so the device does not fill up.
 
-## 🛠️ Technologies Used
+**Customer suggestions** — a place to write down what people ask for but the shop does not keep, so the next
+buying trip has a list instead of guesswork.
 
-- **React**
-- **JavaScript**
-- **Vite**
-- **Lucide React**
-- **Recharts**
-- **vite-plugin-pwa**
-- **HTML5**
-- **CSS3**
-- **Vercel**
+**Partners & stock fund** — a set share of every rupee of profit stays in the shop to buy new stock; the partners
+divide only what is left. Bills marked as paid from the stock fund draw that balance down, so the "money available
+to restock" figure is always current. The share is adjustable.
 
-### One important thing
+## Running it
 
-Since your project is still being developed, I intentionally used **“Future Improvements”** for things like database, authentication, payments, and persistent cart rather than claiming that the app already has them.
+```bash
+npm install
+npm run dev      # development
+npm run build    # production build in dist/
+```
 
-That makes your GitHub README **professional and honest**.
+## Notes and limits
 
-## 📂 Project Structure
+- Barcode scanning uses the browser's built-in `BarcodeDetector`. Chrome on Android supports it; Safari does not,
+  so on iPhone the code has to be typed. There is a text box for that in the scanner.
+- The photo naming tool uses a general image model that recognises shapes like "bottle" or "notebook", not brands.
+  It is a shortcut for typing, not a product database.
+- Barcodes carry no price. Cost and selling price are entered once per item; after that the same barcode restocks
+  in one tap.
+- Data lives in this browser's storage. Clearing site data clears the shop record. Two devices each keep their own
+  copy — a shared record would need a server or a cloud database.
 
-```text
-Mustafa-Shop/
-│
-├── public/
-│   ├── pwa-192x192.png
-│   └── pwa-512x512.png
-│
-├── src/
-│   ├── components/
-│   ├── assets/
-│   └── ...
-│
-├── index.html
-├── package.json
-├── package-lock.json
-├── vite.config.js
-├── .gitignore
-└── README.md
+## Built with
 
-
+React · Vite · Recharts · Lucide · TensorFlow.js (MobileNet) · vite-plugin-pwa

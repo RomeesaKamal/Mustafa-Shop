@@ -1,13 +1,21 @@
 {
   "name": "Mustafa's Shop",
   "short_name": "Mustafa's Shop",
-  "description": "Stock, khata and profit ledger for Mustafa's Shop",
+  "description": "Stock, khata, bills and profit for Mustafa's Shop \u2014 snacks, stationery, photocopy & printing",
   "start_url": "./index.html",
   "display": "standalone",
-  "background_color": "#ECE2C8",
-  "theme_color": "#B23A2E",
+  "background_color": "#F2F6FA",
+  "theme_color": "#0E7490",
   "icons": [
-    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
-    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" }
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
   ]
 }
