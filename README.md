@@ -2,9 +2,6 @@
 
 > A phone-first shop management Progressive Web App for managing **Snacks, Stationery, and Photocopy & Printing** counters from one place.
 
-**🌐 Live Demo:** [Mustafa's Shop — Live App](https://mustafa-shop-stationary-two.vercel.app/?utm_source=chatgpt.com)
-
----
 
 ## 📌 Overview
 
