@@ -941,19 +941,20 @@ function ItemModal({ item, prefill, onClose, onSave, onDelete }) {
 function Sales({ data, persist, showToast }) {
   const [recording, setRecording] = useState(false);
   const [servicing, setServicing] = useState(false);
+  const [viewingSale, setViewingSale] = useState(null);
 
   const sorted = [...data.sales].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
   const totalProfit = data.sales.reduce((a, s) => a + s.profit, 0);
   const totalRevenue = data.sales.reduce((a, s) => a + s.total, 0);
 
-  function applyCredit(customers, customerId, total, note) {
+  function applyCredit(customers, customerId, total, note, saleId) {
     if (!customerId) return customers;
     return customers.map((c) =>
       c.id === customerId
         ? {
             ...c,
             balance: c.balance + total,
-            history: [{ id: uid(), kind: "borrow", amount: total, note, date: todayStr(), createdAt: new Date().toISOString() }, ...c.history],
+            history: [{ id: uid(), kind: "borrow", amount: total, note, date: todayStr(), createdAt: new Date().toISOString(), saleId }, ...c.history],
           }
         : c
     );
@@ -989,7 +990,7 @@ function Sales({ data, persist, showToast }) {
 
     const items = data.items.map((i) => (i.id === itemId ? { ...i, stock: Math.max(0, i.stock - piecesUsed) } : i));
     const customers = credit
-      ? applyCredit(data.customers, customerId, total, `${item.name} × ${qty}${isBox ? " box" : ""}`)
+      ? applyCredit(data.customers, customerId, total, `${item.name} × ${qty}${isBox ? " box" : ""}`, sale.id)
       : data.customers;
 
     persist({ ...data, items, sales: [...data.sales, sale], customers });
@@ -1018,10 +1019,91 @@ function Sales({ data, persist, showToast }) {
       date: todayStr(),
       createdAt: new Date().toISOString(),
     };
-    const customers = credit ? applyCredit(data.customers, customerId, total, description.trim()) : data.customers;
+    const customers = credit ? applyCredit(data.customers, customerId, total, description.trim(), sale.id) : data.customers;
     persist({ ...data, sales: [...data.sales, sale], customers });
     setServicing(false);
     showToast("Job recorded");
+  }
+
+  // Reverses a sale's effect on stock and khata balance, then either removes it
+  // (delete) or writes the new numbers back (edit).
+  function updateSale(id, updates) {
+    const sale = data.sales.find((s) => s.id === id);
+    if (!sale) return;
+
+    let items = data.items;
+    let newQty = sale.qty;
+    let newTotal = sale.total;
+    let newProfit = sale.profit;
+    let newCostPrice = sale.costPrice;
+    let newSellPrice = sale.sellPrice;
+
+    if (sale.isService) {
+      newTotal = Number(updates.amount);
+      if (!newTotal || newTotal <= 0) return;
+      newCostPrice = Number(updates.cost) || 0;
+      newSellPrice = newTotal;
+      newProfit = newTotal - newCostPrice;
+    } else {
+      newQty = Number(updates.qty);
+      if (!newQty || newQty <= 0) return;
+      const qtyDiff = newQty - sale.qty;
+      if (sale.itemId && qtyDiff !== 0) {
+        const item = data.items.find((i) => i.id === sale.itemId);
+        if (item) {
+          const piecesDiff = sale.unit === "box" ? qtyDiff * (item.piecesPerBox || 1) : qtyDiff;
+          items = data.items.map((i) => (i.id === sale.itemId ? { ...i, stock: Math.max(0, i.stock - piecesDiff) } : i));
+        }
+      }
+      newTotal = sale.sellPrice * newQty;
+      newProfit = (sale.sellPrice - sale.costPrice) * newQty;
+    }
+
+    const totalDiff = newTotal - sale.total;
+    let customers = data.customers;
+    if (sale.credit && sale.customerId && totalDiff !== 0) {
+      customers = data.customers.map((c) =>
+        c.id === sale.customerId
+          ? {
+              ...c,
+              balance: c.balance + totalDiff,
+              history: c.history.map((h) => (h.saleId === sale.id ? { ...h, amount: newTotal } : h)),
+            }
+          : c
+      );
+    }
+
+    const updatedSale = { ...sale, qty: newQty, total: newTotal, profit: newProfit, costPrice: newCostPrice, sellPrice: newSellPrice };
+    persist({ ...data, items, sales: data.sales.map((s) => (s.id === id ? updatedSale : s)), customers });
+    setViewingSale(null);
+    showToast("Sale updated");
+  }
+
+  function deleteSale(id) {
+    const sale = data.sales.find((s) => s.id === id);
+    if (!sale) return;
+
+    let items = data.items;
+    if (sale.itemId) {
+      const item = data.items.find((i) => i.id === sale.itemId);
+      if (item) {
+        const piecesBack = sale.unit === "box" ? sale.qty * (item.piecesPerBox || 1) : sale.qty;
+        items = data.items.map((i) => (i.id === sale.itemId ? { ...i, stock: i.stock + piecesBack } : i));
+      }
+    }
+
+    let customers = data.customers;
+    if (sale.credit && sale.customerId) {
+      customers = data.customers.map((c) =>
+        c.id === sale.customerId
+          ? { ...c, balance: c.balance - sale.total, history: c.history.filter((h) => h.saleId !== sale.id) }
+          : c
+      );
+    }
+
+    persist({ ...data, items, sales: data.sales.filter((s) => s.id !== id), customers });
+    setViewingSale(null);
+    showToast("Sale deleted");
   }
 
   return (
@@ -1040,7 +1122,7 @@ function Sales({ data, persist, showToast }) {
       <div className="card list">
         {sorted.length === 0 && <EmptyState>Nothing sold yet. Your first sale shows up here.</EmptyState>}
         {sorted.slice(0, 60).map((s) => (
-          <Row key={s.id} accent={DEPTS[s.dept]?.color}>
+          <Row key={s.id} accent={DEPTS[s.dept]?.color} onClick={() => setViewingSale(s)}>
             <div className="row-main">
               <div className="row-title">{s.itemName}{!s.isService ? ` × ${s.qty}` : ""}</div>
               <div className="row-sub">{fmtDate(s.date)} · {fmtMoney(s.total)} · {s.credit ? "on khata" : "cash"}</div>
@@ -1052,7 +1134,73 @@ function Sales({ data, persist, showToast }) {
 
       {recording && <SaleModal data={data} onClose={() => setRecording(false)} onSubmit={recordSale} />}
       {servicing && <ServiceSaleModal data={data} onClose={() => setServicing(false)} onSubmit={recordService} />}
+      {viewingSale && (
+        <SaleDetailModal
+          sale={viewingSale}
+          onClose={() => setViewingSale(null)}
+          onSave={(updates) => updateSale(viewingSale.id, updates)}
+          onDelete={() => deleteSale(viewingSale.id)}
+        />
+      )}
     </div>
+  );
+}
+
+function SaleDetailModal({ sale, onClose, onSave, onDelete }) {
+  const [qty, setQty] = useState(sale.qty);
+  const [amount, setAmount] = useState(sale.total);
+  const [cost, setCost] = useState(sale.costPrice);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  const liveTotal = sale.isService ? Number(amount) || 0 : sale.sellPrice * (Number(qty) || 0);
+  const liveProfit = sale.isService ? liveTotal - (Number(cost) || 0) : (sale.sellPrice - sale.costPrice) * (Number(qty) || 0);
+
+  return (
+    <Modal title={sale.itemName} onClose={onClose}>
+      <div className="totals">
+        <div><span>Date</span><b>{fmtDate(sale.date)}</b></div>
+        <div><span>Paid</span><b>{sale.credit ? "On khata" : "Cash"}</b></div>
+      </div>
+
+      {sale.isService ? (
+        <>
+          <Field label="Amount charged">
+            <input type="number" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} />
+          </Field>
+          <Field label="Cost (paper/ink)">
+            <input type="number" inputMode="decimal" value={cost} onChange={(e) => setCost(e.target.value)} />
+          </Field>
+        </>
+      ) : (
+        <Field label={`Quantity sold (${sale.unit === "box" ? "boxes" : "pieces"})`} hint={`Sells at ${fmtMoney(sale.sellPrice)} each`}>
+          <input type="number" min="1" inputMode="numeric" value={qty} onChange={(e) => setQty(e.target.value)} />
+        </Field>
+      )}
+
+      <div className="totals">
+        <div><span>New total</span><b>{fmtMoney(liveTotal)}</b></div>
+        <div><span>New profit</span><b className="good">{fmtMoney(liveProfit)}</b></div>
+      </div>
+
+      <button
+        className="btn primary block"
+        onClick={() => onSave(sale.isService ? { amount, cost } : { qty })}
+      >
+        <Check size={16} /> Save changes
+      </button>
+
+      {confirmDelete ? (
+        <div className="danger-zone">
+          <span>Delete this sale? Stock and khata balance will be put back.</span>
+          <div className="inline-row">
+            <button className="btn ghost" onClick={() => setConfirmDelete(false)}>Keep it</button>
+            <button className="btn danger" onClick={onDelete}><Trash2 size={15} /> Delete</button>
+          </div>
+        </div>
+      ) : (
+        <button className="btn text" onClick={() => setConfirmDelete(true)}><Trash2 size={14} /> Delete this sale</button>
+      )}
+    </Modal>
   );
 }
 
@@ -1581,10 +1729,40 @@ function Bills({ data, persist, showToast, onBack }) {
     .filter((b) => b.date.slice(0, 7) === todayStr().slice(0, 7))
     .reduce((a, b) => a + b.amount, 0);
 
-  function saveBill(bill) {
-    persist({ ...data, bills: [...data.bills, bill] });
+  function saveBill(bill, lines) {
+    let items = data.items;
+    (lines || []).forEach((line) => {
+      const qty = Number(line.qty) || 0;
+      if (qty <= 0) return;
+      if (line.itemId) {
+        items = items.map((i) => (i.id === line.itemId ? {
+          ...i,
+          stock: i.stock + qty,
+          costPrice: line.cost !== "" ? Number(line.cost) : i.costPrice,
+          sellPrice: line.sell !== "" ? Number(line.sell) : i.sellPrice,
+        } : i));
+      } else if (line.newName.trim()) {
+        items = [...items, {
+          id: uid(),
+          name: line.newName.trim(),
+          category: line.category,
+          dept: deptOfCategory(line.category),
+          barcode: "",
+          costPrice: Number(line.cost) || 0,
+          sellPrice: Number(line.sell) || 0,
+          stock: qty,
+          lowStockAt: 5,
+          hasBox: false,
+          piecesPerBox: null,
+          boxSellPrice: null,
+          createdAt: todayStr(),
+        }];
+      }
+    });
+
+    persist({ ...data, items, bills: [...data.bills, bill] });
     setAdding(false);
-    showToast("Bill saved");
+    showToast(lines?.length ? "Bill saved and stock updated" : "Bill saved");
   }
 
   function togglePaid(bill) {
@@ -1664,9 +1842,21 @@ function BillModal({ data, onClose, onSave }) {
   const [fromStockFund, setFromStockFund] = useState(true);
   const [photo, setPhoto] = useState("");
   const [busy, setBusy] = useState(false);
+  const [trackItems, setTrackItems] = useState(false);
+  const [lines, setLines] = useState([{ id: uid(), itemId: "", newName: "", category: CATEGORIES[0].key, qty: "", cost: "", sell: "" }]);
   const fileRef = useRef(null);
 
   const suppliers = [...new Set(data.bills.map((b) => b.supplier))].slice(0, 6);
+
+  function updateLine(id, patch) {
+    setLines((ls) => ls.map((l) => (l.id === id ? { ...l, ...patch } : l)));
+  }
+  function addLine() {
+    setLines((ls) => [...ls, { id: uid(), itemId: "", newName: "", category: CATEGORIES[0].key, qty: "", cost: "", sell: "" }]);
+  }
+  function removeLine(id) {
+    setLines((ls) => ls.filter((l) => l.id !== id));
+  }
 
   async function onFile(e) {
     const file = e.target.files?.[0];
@@ -1724,13 +1914,66 @@ function BillModal({ data, onClose, onSave }) {
         <span>Paid out of the stock fund, not from a partner&apos;s pocket</span>
       </label>
 
+      <label className="check-row">
+        <input type="checkbox" checked={trackItems} onChange={(e) => setTrackItems(e.target.checked)} />
+        <span>Update stock with cost &amp; selling prices from this bill</span>
+      </label>
+
+      {trackItems && (
+        <div className="bill-lines">
+          {lines.map((line) => (
+            <div key={line.id} className="bill-line card">
+              <Field label="Item">
+                <select
+                  value={line.itemId}
+                  onChange={(e) => updateLine(line.id, { itemId: e.target.value, newName: "" })}
+                >
+                  <option value="">+ New item…</option>
+                  {data.items.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
+                </select>
+              </Field>
+              {!line.itemId && (
+                <div className="field-grid">
+                  <Field label="New item name">
+                    <input value={line.newName} onChange={(e) => updateLine(line.id, { newName: e.target.value })} placeholder="Item name" />
+                  </Field>
+                  <Field label="Counter">
+                    <select value={line.category} onChange={(e) => updateLine(line.id, { category: e.target.value })}>
+                      {CATEGORIES.map((c) => <option key={c.key} value={c.key}>{c.key}</option>)}
+                    </select>
+                  </Field>
+                </div>
+              )}
+              <div className="field-grid">
+                <Field label="Pieces bought">
+                  <input type="number" inputMode="numeric" value={line.qty} onChange={(e) => updateLine(line.id, { qty: e.target.value })} placeholder="0" />
+                </Field>
+                <Field label="Cost price (each)">
+                  <input type="number" inputMode="decimal" value={line.cost} onChange={(e) => updateLine(line.id, { cost: e.target.value })} placeholder="0" />
+                </Field>
+              </div>
+              <Field label="Selling price (each)" hint="Leave blank to keep the item's current price">
+                <input type="number" inputMode="decimal" value={line.sell} onChange={(e) => updateLine(line.id, { sell: e.target.value })} placeholder="0" />
+              </Field>
+              {lines.length > 1 && (
+                <button type="button" className="btn text" onClick={() => removeLine(line.id)}><Trash2 size={14} /> Remove this item</button>
+              )}
+            </div>
+          ))}
+          <button type="button" className="btn outline block" onClick={addLine}><Plus size={16} /> Add another item</button>
+        </div>
+      )}
+
       <button
         className="btn primary block"
         disabled={!supplier.trim() || !amount}
-        onClick={() => onSave({
-          id: uid(), supplier: supplier.trim(), amount: Number(amount), date,
-          note: note.trim(), paid, fromStockFund, photo, createdAt: new Date().toISOString(),
-        })}
+        onClick={() => onSave(
+          {
+            id: uid(), supplier: supplier.trim(), amount: Number(amount), date,
+            note: note.trim(), paid, fromStockFund, photo, createdAt: new Date().toISOString(),
+          },
+          trackItems ? lines : []
+        )}
       >
         <Check size={16} /> Save bill
       </button>
@@ -2271,6 +2514,8 @@ function ShopStyles() {
       .photo-drop img { width: 100%; border-radius: 10px; display: block; }
       .bill-thumb { width: 42px; height: 42px; object-fit: cover; border-radius: 9px; flex-shrink: 0; border: 1px solid var(--line); }
       .bill-full { width: 100%; border-radius: 12px; border: 1px solid var(--line); display: block; }
+      .bill-lines { display: flex; flex-direction: column; gap: 10px; margin: 4px 0 12px; }
+      .bill-line { padding: 12px; display: flex; flex-direction: column; gap: 8px; }
 
       /* suggestions */
       .suggestion { padding: 13px; display: flex; flex-direction: column; gap: 10px; background: var(--surface); }
