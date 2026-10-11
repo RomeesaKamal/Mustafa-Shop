@@ -7,6 +7,10 @@ import {
   Cookie, PenLine, FileText, Undo2,
 } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
+import { onAuthStateChanged, signOut } from "firebase/auth";
+import { doc, onSnapshot, setDoc } from "firebase/firestore";
+import { auth, db, firebaseConfigured } from "./firebase";
+import Login from "./Login.jsx";
 
 const STORAGE_KEY = "mustafas-shop-data-v2";
 const OLD_STORAGE_KEY = "mustafas-shop-data-v1";
@@ -388,35 +392,123 @@ function PhotoIdentifyModal({ onClose, onIdentified }) {
 /* ---------------- App ---------------- */
 
 export default function App() {
+  // undefined = still checking who's logged in, null = nobody is
+  const [user, setUser] = useState(firebaseConfigured ? undefined : null);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState("home");
   const [toast, setToast] = useState("");
-
-  useEffect(() => {
-    try {
-      const res = storage.get(STORAGE_KEY) || storage.get(OLD_STORAGE_KEY);
-      setData(res && res.value ? migrate(JSON.parse(res.value)) : emptyData());
-    } catch (e) {
-      setData(emptyData());
-    } finally {
-      setLoading(false);
-    }
-  }, []);
 
   const showToast = useCallback((msg) => {
     setToast(msg);
     setTimeout(() => setToast(""), 2400);
   }, []);
 
-  const persist = useCallback((next) => {
-    setData(next);
-    try {
-      storage.set(STORAGE_KEY, JSON.stringify(next));
-    } catch (e) {
-      showToast("Storage is full. Delete a few bill photos to free space.");
+  // Who's signed in (only matters once Firebase is configured)
+  useEffect(() => {
+    if (!firebaseConfigured) return;
+    return onAuthStateChanged(auth, (u) => setUser(u));
+  }, []);
+
+  // Load the shop's data, and keep it live-synced across every device signed
+  // into the same account. With no Firebase project configured yet, it falls
+  // back to this phone's local storage only.
+  useEffect(() => {
+    if (!firebaseConfigured) {
+      try {
+        const res = storage.get(STORAGE_KEY) || storage.get(OLD_STORAGE_KEY);
+        setData(res && res.value ? migrate(JSON.parse(res.value)) : emptyData());
+      } catch (e) {
+        setData(emptyData());
+      } finally {
+        setLoading(false);
+      }
+      return;
     }
-  }, [showToast]);
+
+    if (user === undefined) return; // still checking
+    if (!user) {
+      setData(null);
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    const ref = doc(db, "shops", user.uid);
+    const unsub = onSnapshot(
+      ref,
+      async (snap) => {
+        if (snap.exists()) {
+          setData(migrate(snap.data()));
+          setLoading(false);
+        } else {
+          // First time this Google account has signed in — carry over
+          // whatever is already on this phone instead of starting empty.
+          let seed = emptyData();
+          try {
+            const res = storage.get(STORAGE_KEY) || storage.get(OLD_STORAGE_KEY);
+            if (res && res.value) seed = migrate(JSON.parse(res.value));
+          } catch (e) {}
+          try {
+            await setDoc(ref, seed);
+          } catch (e) {}
+          setData(seed);
+          setLoading(false);
+        }
+      },
+      () => {
+        showToast("Can't reach the cloud right now — showing the last saved copy.");
+        try {
+          const res = storage.get(STORAGE_KEY);
+          setData(res && res.value ? migrate(JSON.parse(res.value)) : emptyData());
+        } catch (e) {
+          setData(emptyData());
+        }
+        setLoading(false);
+      }
+    );
+    return unsub;
+  }, [user, showToast]);
+
+  const persist = useCallback(
+    (next) => {
+      setData(next);
+      try {
+        storage.set(STORAGE_KEY, JSON.stringify(next));
+      } catch (e) {
+        showToast("Storage is full. Delete a few bill photos to free space.");
+      }
+      if (firebaseConfigured && user) {
+        setDoc(doc(db, "shops", user.uid), next).catch(() => {
+          showToast("Saved on this phone — will sync once you're back online.");
+        });
+      }
+    },
+    [showToast, user]
+  );
+
+  const handleSignOut = useCallback(() => {
+    signOut(auth);
+    setTab("home");
+  }, []);
+
+  if (firebaseConfigured && user === undefined) {
+    return (
+      <div className="shop-app">
+        <ShopStyles />
+        <div className="loading-screen">Opening the shop…</div>
+      </div>
+    );
+  }
+
+  if (firebaseConfigured && !user) {
+    return (
+      <div className="shop-app">
+        <ShopStyles />
+        <Login />
+      </div>
+    );
+  }
 
   if (loading || !data) {
     return (
@@ -427,7 +519,7 @@ export default function App() {
     );
   }
 
-  const shared = { data, persist, showToast };
+  const shared = { data, persist, showToast, user, onSignOut: handleSignOut };
 
   return (
     <div className="shop-app">
@@ -1674,12 +1766,26 @@ function More(props) {
   if (view === "suggestions") return <Suggestions {...props} onBack={() => setView(null)} />;
   if (view === "partners") return <Partners {...props} onBack={() => setView(null)} />;
 
-  const { data } = props;
+  const { data, user, onSignOut } = props;
   const unpaid = data.bills.filter((b) => !b.paid).length;
   const newSug = data.suggestions.filter((s) => s.status === "new").length;
 
   return (
     <div className="pane">
+      {user && (
+        <div className="card list">
+          <Row onClick={onSignOut}>
+            <div className="row-icon" style={{ background: "var(--brand-soft)", color: "var(--brand)" }}>
+              {user.photoURL ? <img src={user.photoURL} alt="" style={{ width: 28, height: 28, borderRadius: "50%" }} /> : <Users size={18} />}
+            </div>
+            <div className="row-main">
+              <div className="row-title">{user.displayName || user.email}</div>
+              <div className="row-sub">Signed in with Google · syncs across your devices</div>
+            </div>
+            <span className="btn text" style={{ padding: "4px 8px" }}>Sign out</span>
+          </Row>
+        </div>
+      )}
       <div className="card list">
         <Row onClick={() => setView("bills")}>
           <div className="row-icon" style={{ background: "var(--warn-soft)", color: "var(--warn)" }}><Receipt size={18} /></div>
@@ -1708,8 +1814,9 @@ function More(props) {
       </div>
 
       <p className="fine-print">
-        Everything is saved on this phone only. Nothing is sent anywhere, and clearing your browser data will clear the shop
-        record with it.
+        {user
+          ? "Your shop data syncs to your Google account, so it's the same on every device you sign into."
+          : "Everything is saved on this phone only. Nothing is sent anywhere, and clearing your browser data will clear the shop record with it."}
       </p>
     </div>
   );
