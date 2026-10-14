@@ -26,10 +26,10 @@ const DEPTS = {
 };
 
 const CATEGORIES = [
-  { key: "Snacks", dept: "snacks" },
-  { key: "Cold Drinks", dept: "snacks" },
-  { key: "Stationery", dept: "stationery" },
-  { key: "Printing Supplies", dept: "printing" },
+  { key: "Snacks", dept: "snacks", ur: "اسنیکس" },
+  { key: "Cold Drinks", dept: "snacks", ur: "ٹھنڈے مشروبات" },
+  { key: "Stationery", dept: "stationery", ur: "اسٹیشنری" },
+  { key: "Printing Supplies", dept: "printing", ur: "پرنٹنگ کا سامان" },
 ];
 
 const deptOfCategory = (c) => (CATEGORIES.find((x) => x.key === c) || CATEGORIES[0]).dept;
@@ -196,12 +196,20 @@ function Modal({ title, onClose, children }) {
   );
 }
 
-function Field({ label, children, hint }) {
+function Field({ label, ur, children, hint, hintUr }) {
   return (
     <label className="field">
-      <span>{label}</span>
+      <span>
+        {label}
+        {ur && <span className="ur-label" dir="rtl">{ur}</span>}
+      </span>
       {children}
-      {hint && <em className="field-hint">{hint}</em>}
+      {hint && (
+        <em className="field-hint">
+          {hint}
+          {hintUr && <span className="ur-label" dir="rtl">{hintUr}</span>}
+        </em>
+      )}
     </label>
   );
 }
@@ -775,6 +783,7 @@ function Stock({ data, persist, showToast }) {
         )}
         {filtered.map((i) => (
           <Row key={i.id} onClick={() => setEditing(i)} accent={DEPTS[i.dept]?.color}>
+            {i.photo ? <img className="item-thumb" src={i.photo} alt="" /> : null}
             <div className="row-main">
               <div className="row-title">{i.name}</div>
               <div className="row-sub">
@@ -875,6 +884,8 @@ function QuickRestockModal({ item, onClose, onApply }) {
 }
 
 function ItemModal({ item, prefill, onClose, onSave, onDelete }) {
+  const [photo, setPhoto] = useState(item?.photo || "");
+  const [photoBusy, setPhotoBusy] = useState(false);
   const [name, setName] = useState(item?.name || "");
   const [category, setCategory] = useState(item?.category || "Snacks");
   const [barcode, setBarcode] = useState(item?.barcode || prefill?.barcode || "");
@@ -889,6 +900,8 @@ function ItemModal({ item, prefill, onClose, onSave, onDelete }) {
   const [identifying, setIdentifying] = useState(false);
   const [looking, setLooking] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const cameraRef = useRef(null);
+  const galleryRef = useRef(null);
 
   // Look the barcode up once, when the modal opens with a scanned code and no name yet.
   useEffect(() => {
@@ -913,11 +926,23 @@ function ItemModal({ item, prefill, onClose, onSave, onDelete }) {
     if (found?.name && !name) setName(found.brand ? `${found.name} (${found.brand})` : found.name);
   }
 
+  async function onPhotoFile(e) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setPhotoBusy(true);
+    try {
+      setPhoto(await compressImage(file));
+    } catch (err) { /* ignore */ }
+    setPhotoBusy(false);
+  }
+
   function submit() {
     if (!name.trim() || costPrice === "" || sellPrice === "" || stock === "") return;
     if (hasBox && (!piecesPerBox || !boxSellPrice)) return;
     onSave({
       id: item?.id || uid(),
+      photo,
       name: name.trim(),
       category,
       dept: deptOfCategory(category),
@@ -934,8 +959,50 @@ function ItemModal({ item, prefill, onClose, onSave, onDelete }) {
   }
 
   return (
-    <Modal title={item ? "Edit item" : "New item"} onClose={onClose}>
-      <Field label="Barcode" hint="Scan it once. Next time the same code goes straight to restock.">
+    <Modal title={item ? "Edit item / آئٹم میں تبدیلی" : "New item / نیا آئٹم"} onClose={onClose}>
+      <SectionLabel>Photo <span className="ur-label" dir="rtl">تصویر (اختیاری)</span></SectionLabel>
+      <div className="item-photo-row">
+        <div className="item-photo-preview">
+          {photoBusy ? <span className="item-photo-loading">…</span> : photo ? (
+            <img src={photo} alt="" />
+          ) : (
+            <ImageIcon size={26} color="var(--ink-soft)" />
+          )}
+        </div>
+        <div className="item-photo-actions">
+          <button type="button" className="btn outline block" onClick={() => cameraRef.current?.click()}>
+            <Camera size={16} /> Use camera <span className="ur-label" dir="rtl">کیمرہ استعمال کریں</span>
+          </button>
+          <button type="button" className="btn outline block" onClick={() => galleryRef.current?.click()}>
+            <ImageIcon size={16} /> Upload from phone <span className="ur-label" dir="rtl">فون سے اپ لوڈ کریں</span>
+          </button>
+          {photo && (
+            <button type="button" className="btn text" onClick={() => setPhoto("")}>
+              <Trash2 size={13} /> Remove photo <span className="ur-label" dir="rtl">تصویر ہٹائیں</span>
+            </button>
+          )}
+        </div>
+      </div>
+      <input ref={cameraRef} type="file" accept="image/*" capture="environment" onChange={onPhotoFile} style={{ display: "none" }} />
+      <input ref={galleryRef} type="file" accept="image/*" onChange={onPhotoFile} style={{ display: "none" }} />
+
+      <SectionLabel>What is it <span className="ur-label" dir="rtl">یہ کیا ہے</span></SectionLabel>
+
+      <Field label="Item name" ur="آئٹم کا نام">
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Dolphin notebook 100pg" />
+      </Field>
+
+      <Field label="Counter" ur="شعبہ">
+        <div className="chip-row">
+          {CATEGORIES.map((c) => (
+            <button key={c.key} type="button" className={`chip ${category === c.key ? "active" : ""}`} onClick={() => setCategory(c.key)}>
+              {c.key}
+            </button>
+          ))}
+        </div>
+      </Field>
+
+      <Field label="Barcode (optional)" ur="بار کوڈ (اختیاری)" hint="Scan it once — next time the same code goes straight to restock." hintUr="ایک بار اسکین کریں، اگلی بار خود بخود اسٹاک بڑھ جائے گا۔">
         <div className="inline-row">
           <input value={barcode} onChange={(e) => setBarcode(e.target.value)} placeholder="Scan or type" inputMode="numeric" />
           <button type="button" className="btn outline square" onClick={() => setScanning(true)} title="Scan barcode"><ScanLine size={16} /></button>
@@ -944,54 +1011,46 @@ function ItemModal({ item, prefill, onClose, onSave, onDelete }) {
         {looking && <em className="field-hint">Looking the code up online…</em>}
       </Field>
 
-      <Field label="Item name">
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Dolphin notebook 100pg" />
-      </Field>
-
-      <Field label="Counter">
-        <div className="chip-row">
-          {CATEGORIES.map((c) => (
-            <button key={c.key} type="button" className={`chip ${category === c.key ? "active" : ""}`} onClick={() => setCategory(c.key)}>{c.key}</button>
-          ))}
-        </div>
-      </Field>
+      <SectionLabel>Price <span className="ur-label" dir="rtl">قیمت</span></SectionLabel>
 
       <div className="field-grid">
-        <Field label="Cost price (per piece)">
+        <Field label="Cost price (per piece)" ur="خرید قیمت">
           <input type="number" inputMode="decimal" value={costPrice} onChange={(e) => setCostPrice(e.target.value)} placeholder="0" />
         </Field>
-        <Field label="Selling price (per piece)">
+        <Field label="Selling price (per piece)" ur="فروخت قیمت">
           <input type="number" inputMode="decimal" value={sellPrice} onChange={(e) => setSellPrice(e.target.value)} placeholder="0" />
-        </Field>
-      </div>
-
-      <div className="field-grid">
-        <Field label="Pieces in hand">
-          <input type="number" inputMode="numeric" value={stock} onChange={(e) => setStock(e.target.value)} placeholder="0" />
-        </Field>
-        <Field label="Warn me below">
-          <input type="number" inputMode="numeric" value={lowStockAt} onChange={(e) => setLowStockAt(e.target.value)} />
         </Field>
       </div>
 
       {costPrice !== "" && sellPrice !== "" && (
         <div className="totals">
-          <div><span>You earn per piece</span><b className="good">{fmtMoney(Number(sellPrice || 0) - Number(costPrice || 0))}</b></div>
+          <div><span>You earn per piece <span className="ur-label" dir="rtl">فی پیس منافع</span></span><b className="good">{fmtMoney(Number(sellPrice || 0) - Number(costPrice || 0))}</b></div>
         </div>
       )}
 
+      <SectionLabel>Stock <span className="ur-label" dir="rtl">اسٹاک</span></SectionLabel>
+
+      <div className="field-grid">
+        <Field label="Pieces in hand" ur="موجودہ تعداد">
+          <input type="number" inputMode="numeric" value={stock} onChange={(e) => setStock(e.target.value)} placeholder="0" />
+        </Field>
+        <Field label="Warn me below" ur="کم ہونے پر بتائیں">
+          <input type="number" inputMode="numeric" value={lowStockAt} onChange={(e) => setLowStockAt(e.target.value)} />
+        </Field>
+      </div>
+
       <label className="check-row">
         <input type="checkbox" checked={hasBox} onChange={(e) => setHasBox(e.target.checked)} />
-        <span>Also sold as a full box or carton</span>
+        <span>Also sold as a full box or carton <span className="ur-label" dir="rtl">باکس یا کارٹن میں بھی فروخت ہوتا ہے</span></span>
       </label>
 
       {hasBox && (
         <>
           <div className="field-grid">
-            <Field label="Pieces per box">
+            <Field label="Pieces per box" ur="باکس میں تعداد">
               <input type="number" inputMode="numeric" value={piecesPerBox} onChange={(e) => setPiecesPerBox(e.target.value)} placeholder="24" />
             </Field>
-            <Field label="Box price">
+            <Field label="Box price" ur="باکس کی قیمت">
               <input type="number" inputMode="decimal" value={boxSellPrice} onChange={(e) => setBoxSellPrice(e.target.value)} placeholder="550" />
             </Field>
           </div>
@@ -1006,6 +1065,7 @@ function ItemModal({ item, prefill, onClose, onSave, onDelete }) {
 
       <button className="btn primary block" onClick={submit}>
         <Check size={16} /> {item ? "Save changes" : "Add to stock"}
+        <span className="ur-label" dir="rtl">{item ? "تبدیلیاں محفوظ کریں" : "اسٹاک میں شامل کریں"}</span>
       </button>
 
       {item && (
@@ -2623,6 +2683,24 @@ function ShopStyles() {
       .bill-full { width: 100%; border-radius: 12px; border: 1px solid var(--line); display: block; }
       .bill-lines { display: flex; flex-direction: column; gap: 10px; margin: 4px 0 12px; }
       .bill-line { padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+
+      /* bilingual labels */
+      .ur-label { display: block; font-size: 12px; color: var(--ink-soft); font-weight: 500; margin-top: 1px; unicode-bidi: isolate; }
+      .btn .ur-label, .check-row .ur-label, .totals .ur-label { display: inline; margin: 0 0 0 6px; font-size: 0.85em; opacity: 0.85; }
+      .danger-zone .ur-label { display: inline; }
+
+      /* item photo picker */
+      .item-photo-row { display: flex; gap: 12px; align-items: stretch; margin-bottom: 4px; }
+      .item-photo-preview {
+        width: 84px; height: 84px; border-radius: 14px; flex-shrink: 0;
+        background: var(--brand-soft); border: 1px dashed var(--line);
+        display: flex; align-items: center; justify-content: center; overflow: hidden;
+      }
+      .item-photo-preview img { width: 100%; height: 100%; object-fit: cover; }
+      .item-photo-loading { font-size: 20px; color: var(--ink-soft); }
+      .item-photo-actions { flex: 1; display: flex; flex-direction: column; gap: 6px; justify-content: center; }
+      .item-photo-actions .btn { font-size: 13px; padding: 9px 10px; }
+      .item-thumb { width: 40px; height: 40px; border-radius: 10px; object-fit: cover; margin-right: 10px; flex-shrink: 0; border: 1px solid var(--line); }
 
       /* suggestions */
       .suggestion { padding: 13px; display: flex; flex-direction: column; gap: 10px; background: var(--surface); }
