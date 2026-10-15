@@ -1,0 +1,9 @@
+jar verified. — the signature verification succeeded.
+
+
+
+Signed by "CN=Romeesa Kamal..." — your release certificate was found.
+
+
+
+The signer certificate will expire on 2054-03-02. — the certificate has a long validity period.
