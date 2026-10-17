@@ -1,5 +1,12 @@
+
 {
   "appId": "com.mustafashop.app",
   "appName": "Mustafa Shop",
-  "webDir": "dist"
+  "webDir": "dist",
+  "plugins": {
+    "FirebaseAuthentication": {
+      "skipNativeAuth": true,
+      "providers": ["google.com"]
+    }
+  }
 }
