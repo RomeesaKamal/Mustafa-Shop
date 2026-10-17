@@ -1,0 +1,40 @@
+{
+  "project_info": {
+    "project_number": "217719246542",
+    "firebase_url": "https://mustafas-shop-default-rtdb.asia-southeast1.firebasedatabase.app",
+    "project_id": "mustafas-shop",
+    "storage_bucket": "mustafas-shop.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:217719246542:android:eab2ef8feb9d9b7a714a9f",
+        "android_client_info": {
+          "package_name": "com.mustafashop.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "217719246542-4hdpb6hj3ak6a15kkl6pe8p25uilt51n.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDSv-LlzbNMiZeyJcccVZ-kjTghhAP4aQg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "217719246542-4hdpb6hj3ak6a15kkl6pe8p25uilt51n.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
