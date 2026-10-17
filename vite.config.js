@@ -8,6 +8,12 @@ export default defineConfig({
 
     VitePWA({
       registerType: 'autoUpdate',
+      // We register the service worker ourselves (see the guarded script in
+      // index.html) so it can be skipped inside the Capacitor Android app.
+      // Letting vite-plugin-pwa also auto-inject its own registration script
+      // caused it to register a second time on every load, including inside
+      // the native app — part of what produced the white screen on phone.
+      injectRegister: false,
 
       manifest: {
         name: 'Mustafa Shop',

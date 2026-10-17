@@ -19,7 +19,12 @@
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
     <script>
-      if ("serviceWorker" in navigator) {
+      // Only register a Service Worker for real browser/PWA installs.
+      // Inside the Capacitor Android app, "window.Capacitor" exists and
+      // files are already served from the APK itself — a Workbox/PWA
+      // Service Worker on top of that can intercept and break those loads,
+      // which is a common cause of a blank white screen after install.
+      if ("serviceWorker" in navigator && !window.Capacitor) {
         window.addEventListener("load", () => {
           navigator.serviceWorker.register("/sw.js").catch(() => {});
         });

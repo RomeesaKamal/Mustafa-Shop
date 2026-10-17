@@ -9,13 +9,13 @@
 
 The application brings everyday shop operations into one simple interface, including **stock management, sales, photocopy & printing services, customer credit (Khata), purchase bills, customer requests, and shop fund management**.
 
-It is designed as a **Progressive Web App (PWA)**, allowing it to be installed and used like a mobile application on supported devices.
+It started as a **Progressive Web App (PWA)** and is also packaged as a **native Android app (via Capacitor)**, so it can be installed and used like a regular mobile app.
 
-### 🔒 Privacy-First
+### 🔒 Privacy & Sync
 
-All shop data is stored locally on the device using browser storage.
+Shop data is always saved locally on the device first.
 
-**No shop data is uploaded to a server or cloud database.**
+Signing in with Google is optional. When signed in, data also syncs to a private Firebase/Firestore account so the same shop can be opened from more than one device. Without signing in, the app works exactly as before — fully offline, with data kept only on that device.
 
 ---
 
@@ -122,6 +122,15 @@ This creates a useful buying list for future market trips instead of relying on 
 
 ---
 
+### 🔐 Account & Sync
+
+* Sign in with a Google account (optional)
+* The same shop data is then available from any device signed into that account, via Firebase/Firestore
+* Without signing in, the app works exactly as before — fully offline, data kept only on that device
+* If the cloud can't be reached, the app keeps working from the last saved copy and syncs once back online
+
+---
+
 ### 🤝 Partners & Stock Fund
 
 Manage the distribution of shop profits.
@@ -138,13 +147,15 @@ This provides a clear view of:
 
 ---
 
-## 📱 Progressive Web App
+## 📱 Progressive Web App & Android App
 
-Mustafa's Shop is built as a **Progressive Web App (PWA)**.
+Mustafa's Shop is built as a **Progressive Web App (PWA)**, and the same codebase is also wrapped as a **native Android app using Capacitor** (package `com.mustafashop.app`) for installing via an APK or publishing to the Play Store.
 
-On supported devices, it can be installed directly from the browser and used like a regular mobile application.
+On supported devices, the PWA can be installed directly from the browser and used like a regular mobile application. The native build gives the same app a proper Android launcher icon and app-store distribution.
 
 The interface is designed primarily for **phone usage**, making common shop operations quick and convenient while working at the counter.
+
+> **Note:** the PWA's offline Service Worker (for caching in the browser) is intentionally skipped when the app detects it's running inside the native Android build — the native app already loads its files directly from the APK, and running a Service Worker on top of that caused a blank white screen on launch.
 
 ---
 
@@ -160,6 +171,8 @@ The interface is designed primarily for **phone usage**, making common shop oper
 | 🧠 TensorFlow.js / MobileNet | Image-based product recognition   |
 | 📱 vite-plugin-pwa           | Progressive Web App functionality |
 | 🌐 BarcodeDetector API       | Barcode scanning                  |
+| 📦 Capacitor                 | Wrapping the app as a native Android app |
+| 🔥 Firebase (Auth + Firestore) | Google sign-in and optional cross-device sync |
 
 ---
 
@@ -213,6 +226,18 @@ Preview the production build locally:
 npm run preview
 ```
 
+### Android (native app)
+
+After a production build, sync the web output into the Capacitor Android project, then open and run it from Android Studio:
+
+```bash
+npm run build
+npx cap sync android
+npx cap open android
+```
+
+`npx cap sync` must be run again every time `dist/` changes — otherwise the installed Android app keeps running the old build.
+
 ---
 
 ## ⚠️ Notes & Limitations
@@ -250,16 +275,13 @@ These values are entered by the shop owner.
 
 Once an item has been saved, the same barcode can be used for faster future restocking and sales.
 
-### 💾 Local Storage
+### 💾 Local Storage & Sync
 
-Shop data is stored in the browser on the device being used.
+Shop data is always stored on the device first (browser storage on the web, device storage in the Android app).
 
-Therefore:
-
-* Clearing browser/site data can remove the shop record.
-* Data is not automatically synchronized between devices.
-* Two devices maintain separate records.
-* A shared multi-device system would require a backend or cloud database.
+* Without signing in, data stays on that one device only and is not shared with others.
+* Signing in with the same Google account on two devices syncs data between them via Firestore.
+* Clearing the app's/browser's data, or uninstalling the app, removes the on-device copy — if signed in, the cloud copy is unaffected; if not signed in, that copy is lost.
 
 ---
 
