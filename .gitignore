@@ -22,3 +22,8 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+# Keep Android signing secrets private
+android/keystore.properties
+android/**/*.jks
+android/**/*.keystore
+
