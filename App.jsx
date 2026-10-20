@@ -118,6 +118,37 @@ function fmtDate(d) {
   return dt.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
 }
 
+function fmtTime(iso) {
+  const dt = new Date(iso);
+  if (!iso || isNaN(dt.getTime())) return "";
+  return dt.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+}
+
+// Plain-text version of a customer's khata, for copying into WhatsApp/SMS —
+// works even where printing isn't available (e.g. inside the Android app).
+function khataListText(shopName, customer) {
+  const borrowed = [...customer.history]
+    .filter((h) => h.kind === "borrow")
+    .sort((a, b) => ((a.createdAt || a.date) < (b.createdAt || b.date) ? -1 : 1));
+  const totalBorrowed = borrowed.reduce((a, h) => a + h.amount, 0);
+  const totalPaid = customer.history.filter((h) => h.kind === "payment").reduce((a, h) => a + h.amount, 0);
+
+  const lines = [
+    shopName,
+    `Khata statement — ${customer.name}`,
+    customer.phone || null,
+    "",
+    ...(borrowed.length
+      ? borrowed.map((h) => `${fmtDate(h.date)} ${fmtTime(h.createdAt)} — ${h.note || "Goods taken"} — ${fmtMoney(h.amount)}`)
+      : ["No items recorded yet."]),
+    "",
+    `Total taken: ${fmtMoney(totalBorrowed)}`,
+    `Paid back: ${fmtMoney(totalPaid)}`,
+    `Balance due: ${fmtMoney(customer.balance)}`,
+  ].filter((l) => l !== null);
+  return lines.join("\n");
+}
+
 async function compressImage(file, maxDim = 900, quality = 0.6) {
   const url = URL.createObjectURL(file);
   try {
@@ -1664,10 +1695,83 @@ function AddCustomerForm({ onAdd }) {
   );
 }
 
+// The printable slip handed to the customer — only this renders when printing,
+// everything else on screen is hidden by the @media print rules in ShopStyles.
+function KhataPrintSheet({ shopName, customer }) {
+  const borrowed = [...customer.history]
+    .filter((h) => h.kind === "borrow")
+    .sort((a, b) => ((a.createdAt || a.date) < (b.createdAt || b.date) ? -1 : 1));
+  const totalBorrowed = borrowed.reduce((a, h) => a + h.amount, 0);
+  const totalPaid = customer.history.filter((h) => h.kind === "payment").reduce((a, h) => a + h.amount, 0);
+  const now = new Date().toISOString();
+
+  return (
+    <div className="print-only" id="khata-print-sheet">
+      <div className="print-shop">{shopName}</div>
+      <div className="print-sub">Khata statement</div>
+      <div className="print-customer">
+        <div className="print-customer-name">{customer.name}</div>
+        {customer.phone && <div>{customer.phone}</div>}
+        <div className="print-meta">Printed {fmtDate(now)} · {fmtTime(now)}</div>
+      </div>
+      <table className="print-table">
+        <thead>
+          <tr><th>Date</th><th>Time</th><th>Item / note</th><th>Amount</th></tr>
+        </thead>
+        <tbody>
+          {borrowed.length === 0 && (
+            <tr><td colSpan={4} style={{ textAlign: "center" }}>No items recorded yet</td></tr>
+          )}
+          {borrowed.map((h) => (
+            <tr key={h.id}>
+              <td>{fmtDate(h.date)}</td>
+              <td>{fmtTime(h.createdAt)}</td>
+              <td>{h.note || "Goods taken"}</td>
+              <td>{fmtMoney(h.amount)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="print-summary">
+        <div><span>Total taken</span><b>{fmtMoney(totalBorrowed)}</b></div>
+        <div><span>Paid back</span><b>{fmtMoney(totalPaid)}</b></div>
+        <div className="print-total-due"><span>Balance due</span><b>{fmtMoney(customer.balance)}</b></div>
+      </div>
+      <div className="print-sign-row">
+        <div className="print-sign"><span>Customer signature</span></div>
+        <div className="print-sign"><span>Shopkeeper signature</span></div>
+      </div>
+    </div>
+  );
+}
+
 function CustomerDetail({ customer, onBack, onUpdate, onClose, onReopen, onDelete, showToast }) {
   const [entry, setEntry] = useState(null);       // "borrow" | "payment"
   const [leaving, setLeaving] = useState(false);
+  const [printing, setPrinting] = useState(false);
   const isClosed = customer.status === "closed";
+
+  // Fires the system print dialog once the printable sheet has mounted,
+  // then hides it again once the dialog closes (or is cancelled).
+  useEffect(() => {
+    if (!printing) return;
+    const t = setTimeout(() => window.print(), 60);
+    const stop = () => setPrinting(false);
+    window.addEventListener("afterprint", stop);
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener("afterprint", stop);
+    };
+  }, [printing]);
+
+  async function copyList() {
+    try {
+      await navigator.clipboard.writeText(khataListText("Mustafa's Shop", customer));
+      showToast("List copied — paste it in WhatsApp or SMS");
+    } catch (e) {
+      showToast("Couldn't copy — try Print instead");
+    }
+  }
 
   function addEntry(kind, amount, note) {
     const amt = Number(amount);
@@ -1733,7 +1837,16 @@ function CustomerDetail({ customer, onBack, onUpdate, onClose, onReopen, onDelet
         </div>
       )}
 
-      <SectionLabel>Everything taken, by date</SectionLabel>
+      <SectionLabel
+        action={
+          <div className="btn-pair-inline">
+            <button className="btn outline small" onClick={copyList}><FileText size={14} /> Copy list</button>
+            <button className="btn outline small" onClick={() => setPrinting(true)}><Printer size={14} /> Print list</button>
+          </div>
+        }
+      >
+        Everything taken, by date
+      </SectionLabel>
       <div className="card list">
         {grouped.length === 0 && <EmptyState>Nothing recorded on this account yet.</EmptyState>}
         {grouped.map(([date, entries]) => (
@@ -1793,6 +1906,8 @@ function CustomerDetail({ customer, onBack, onUpdate, onClose, onReopen, onDelet
           <EntryForm kind={entry} onSubmit={(amt, note) => addEntry(entry, amt, note)} />
         </Modal>
       )}
+
+      {printing && <KhataPrintSheet shopName="Mustafa's Shop" customer={customer} />}
     </div>
   );
 }
@@ -2558,6 +2673,7 @@ function ShopStyles() {
       }
       .btn-pair { display: flex; gap: 8px; }
       .btn-pair > * { flex: 1; }
+      .btn-pair-inline { display: flex; gap: 8px; }
       .icon-btn { background: none; border: none; cursor: pointer; color: var(--ink-soft); padding: 4px; display: flex; }
 
       /* scan call to action */
@@ -2750,6 +2866,32 @@ function ShopStyles() {
         position: fixed; bottom: 86px; left: 50%; transform: translateX(-50%);
         background: var(--ink); color: #fff; padding: 10px 18px; border-radius: 999px;
         font-size: 12.5px; font-weight: 500; z-index: 60; max-width: 88%; text-align: center;
+      }
+
+      /* ---- printable khata slip ----
+         Hidden on screen; shown (and everything else hidden) only when
+         window.print() runs, so only the slip comes out of the printer. */
+      .print-only { display: none; }
+      @media print {
+        body * { visibility: hidden; }
+        .print-only, .print-only * { visibility: visible; }
+        .print-only {
+          display: block; position: fixed; inset: 0; background: #fff; color: #111;
+          padding: 24px; font-family: Arial, Helvetica, sans-serif;
+        }
+        .print-shop { font-size: 20px; font-weight: 700; }
+        .print-sub { font-size: 13px; color: #444; margin-bottom: 14px; }
+        .print-customer { margin-bottom: 14px; font-size: 13px; }
+        .print-customer-name { font-size: 16px; font-weight: 700; }
+        .print-meta { color: #555; margin-top: 2px; }
+        .print-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .print-table th, .print-table td { border: 1px solid #ccc; padding: 6px 8px; text-align: left; }
+        .print-table th { background: #f2f2f2; }
+        .print-summary { margin-top: 14px; font-size: 13px; display: flex; flex-direction: column; gap: 4px; max-width: 260px; margin-left: auto; }
+        .print-summary > div { display: flex; justify-content: space-between; gap: 16px; }
+        .print-total-due { border-top: 1px solid #333; padding-top: 6px; margin-top: 2px; font-size: 15px; font-weight: 700; }
+        .print-sign-row { display: flex; justify-content: space-between; margin-top: 56px; font-size: 12px; }
+        .print-sign { width: 42%; border-top: 1px solid #333; padding-top: 6px; text-align: center; color: #444; }
       }
     `}</style>
   );
